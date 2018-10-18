@@ -70,14 +70,14 @@ u32 fat_strcmp(const char *str1, const char *str2, char uch)
 	u32 scnt = 0;
     while (1) {
 		scnt++;
-        if ((*str1 == '\0') && (*str2 == '\0')) {			//同时结束
+        if (((*str1 == '\0')||(*str1 == uch)) && ((*str2 == '\0')||(*str2 == uch))) {			//同时结束
             return 0;
         }
-    	if ((*str1 == uch) && (*str2 == uch)) {			//同时结束
-            return 0;
-        }
-
-        if ((*str1 == '\0') || (*str2 == '\0')) {	//有一方提前结束
+    	/* if ((*str1 == uch) && (*str2 == uch)) {			//同时结束 */
+        /*     return 0; */
+        /* } */
+        /*  */
+        if ((*str1 == '\0') || (*str2 == '\0')||(*str1 == uch) || (*str2 == uch)) {	//有一方提前结束
             return scnt;
         }
 
@@ -199,7 +199,7 @@ FAT_WIN *alloc_win()
 {
    u8 win_cnt; 
    FAT_WIN *win;
-   for(win = scan_win, win_cnt = 0; win_cnt<sizeof(scan_win)/sizeof(FAT_WIN); win_cnt++){
+   for(win = scan_win, win_cnt = 0; win_cnt<sizeof(scan_win)/sizeof(FAT_WIN);win++, win_cnt++){
        if(!(win->flag&WIN_USE)){ 
            win->flag |= WIN_USE;
            return win; 
@@ -243,7 +243,7 @@ static u32 fat_move_win(FAT_HDL *fs, FAT_WIN *win, u32 sector)
         ret = fat_syn_win(fs, win);
         CHECK_RES(ret);
 
-        fat_printf("mov win %x %x", win->sector, sector);
+        fat_printf("mov win %x %x\n", win->sector, sector);
         if (FS_NO_ERR != fat_disk_read(fs, win->buffer, sector, 1)) {
             return FS_DISK_ERR;
         }
@@ -631,7 +631,7 @@ u32 ld_st_clc(PATH_DIR *p_dir)
     u8 depth_cnt;
     p_dir->clc.len = 0;
     for(depth_cnt = 0; depth_cnt<FAT_PATH_DEPTH; depth_cnt++){
-    p_dir->clc.dir_ptr[p_dir->depth-1] = 0; 
+    p_dir->clc.dir_ptr[p_dir->depth] = 0; 
     }
 }
 
@@ -768,7 +768,7 @@ u32 fat_dir_next(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
 
 //_func_enty:
     //寻找一个有效的热目录项
-    do {
+    for(;;){
         ret = fat_next_FDI(fs, dir, FDI);
         if (ret != FS_NO_ERR) {
             return ret;
@@ -783,11 +783,10 @@ u32 fat_dir_next(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
             break;
         }
 
-        if (FDI[11] == AM_LFN) { //长文件名项
-            continue;
+        if (FDI[11] != AM_LFN) { //不是长文件名项
+            break;
         }
-
-    } while (0);
+    }
 
 
     name = file_info->name;
@@ -888,15 +887,15 @@ u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
     FAT_DIR *dir;
     if (*path == '/') { //根目录开始
         fat_ld_dir(fs, &p_dir->dir[0], fs->root_dir_clust);
-        p_dir->depth = 1;
+        p_dir->depth = 0;
 #if DIR_ACCELE 
         p_dir->clc.len = 0;
         /* p_dir->clc.ptr = p_dir->clc.len; */
-        p_dir->clc.dir_ptr[p_dir->depth-1] = p_dir->clc.len; 
+        p_dir->clc.dir_ptr[p_dir->depth] = p_dir->clc.len; 
 #endif
         path++;
     }
-    dir = &p_dir->dir[p_dir->depth - 1];
+    dir = &p_dir->dir[p_dir->depth];
 #if DIR_ACCELE 
     dir->clc_cache = p_dir->clc.cahce[p_dir->clc.len];
     dir->clc_len = DIR_ACCELE_BUF_L - p_dir->clc_len;
@@ -926,19 +925,23 @@ u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
                 while (1) {
                     switch (*path) {
                         case '\0':   //路径末尾
-                            fat_ld_dir(fs, &p_dir->dir[p_dir->depth], file_info.st_clust);
-                            p_dir->depth++;
+                            if(p_dir == FAT_PATH_DEPTH - 1){
+                                return FS_DIR_LIMI;
+                            }
+                            fat_ld_dir(fs, &p_dir->dir[++p_dir->depth], file_info.st_clust);
 #if DIR_ACCELE 
                             dir->clc_cache = p_dir->clc.cahce[ptr];
                             dir->clc_len = 0;
 #endif
                             return FS_NO_ERR;
                         case '/':  //还有后续目录
-                            fat_ld_dir(fs, &p_dir->dir[p_dir->depth], file_info.st_clust);
+                            if(p_dir == FAT_PATH_DEPTH - 1){
+                                return FS_DIR_LIMI;
+                            }
+                            fat_ld_dir(fs, &p_dir->dir[++p_dir->depth], file_info.st_clust);
                             if (*++path == '\0') { //后续目录为空，也是路径末尾
                                 return FS_NO_ERR;
                             }
-                            p_dir->depth++;
                             return fat_open_dir_bypath(fs, p_dir, path); //递推下层目录
                         default:
                             path++;
@@ -974,7 +977,7 @@ static u32 fat_creat_file(FAT_HDL *fs, PATH_DIR *p_dir, FILE_DIR_INFO *file_info
 
     ret = fat_open_dir_bypath(fs, p_dir, path);
     CHECK_RES(ret);
-    dir = &p_dir->dir[p_dir->depth - 1];
+    dir = &p_dir->dir[p_dir->depth];
 
     file_info->file_size = 0;
     // file_info->st_clust = 0;
@@ -1063,11 +1066,11 @@ u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
         path++;
         p_dir->depth = 0;
     }
-    dir = &p_dir->dir[p_dir->depth - 1];
+    dir = &p_dir->dir[p_dir->depth];
     fat_ld_dir(fs, dir, dir->st_clust);
     ret = fat_open_dir_bypath(fs, p_dir, path);
     CHECK_RES(ret);
-    dir = &p_dir->dir[p_dir->depth - 1];
+    dir = &p_dir->dir[p_dir->depth];
 
     
 
@@ -1193,7 +1196,7 @@ u32 fat_open_file(FAT_HDL *fs, FILE_HDL *f_hdl, char *path, u32 access)
     if (fat_open_dir_bypath(fs, &f_hdl->p_dir, path)) {
         return FS_NO_DIR;
     }
-    dir = &f_hdl->p_dir.dir[f_hdl->p_dir.depth - 1];
+    dir = &f_hdl->p_dir.dir[f_hdl->p_dir.depth];
 
     //找到文件名位置
     filename = cp;

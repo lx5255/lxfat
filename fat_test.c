@@ -58,7 +58,7 @@ void stack_check()
                         /*06*/    NO_MSG,\
                         /*07*/    NO_MSG,\
                         /*08*/    NO_MSG,\
-                        /*09*/    NO_MSG,
+                        /*09*/    MSG_CHANGE_WORKMODE,
 
 #define ADKEY_FAT_HOLD		\
                         /*00*/    NO_MSG,\
@@ -135,18 +135,23 @@ FAT_HDL *__fs_open(void *dev, u32 boot)
 
 void __fs_open_file() 
 {
+    u32 res;
     if(fs_p == NULL){
         printf("no open fs\n");
        return; 
     }
-     /* if (!fat_open_file(&fs_hd, &file_hdl, "/111/222/333/444/555/666/777/LXFAT.TXT", 0)) { */
-     if (!fat_open_file(&fs_hd, &file_hdl, get_filename(), 0)) {
+    res = fat_open_file(&fs_hd, &file_hdl, "/111/222/333/444/555/666/777/LXFAT.TXT", 0);
+     if (!res) {
+     /* if (!fat_open_file(&fs_hd, &file_hdl, get_filename(), 0)) { */
         printf("file size %d\n", file_hdl.file_info.file_size);
         while (124 == fat_file_read(&file_hdl, fat_data_buffer1, 124)) {
             printf("%s", fat_data_buffer1);
         }
+    }else{
+        printf("open err %d\n", res);
+        return;
     }
-     f_p = &file_hdl;
+    f_p = &file_hdl;
 }
 
 void __fs_write_file()
@@ -287,6 +292,9 @@ void fat_loop()
                 break;
             case MSG_FS_DEL:
                 __fs_del();
+                break;
+            case MSG_CHANGE_WORKMODE:
+                return;
                 break;
             default:
                 break;
