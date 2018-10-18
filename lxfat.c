@@ -127,6 +127,20 @@ void fat_uppercase(char *str)
        str++;
     }
 }
+
+//检测是否有小写字符
+static u16 check_lowercase(char *str)
+{
+    u16 cnt = 0;
+    while(*str != '\0'){
+       cnt++;
+       if((*str>='a')&&(*str<='z')){
+           return cnt;
+       }
+       str++;
+    }
+    return 0;
+}
 //********************************************************************************************
 //                      FAT DISK  FUNC
 //
@@ -662,10 +676,12 @@ static u32 fat_get_FDI(FAT_HDL *fs, FAT_DIR *dir, u8 *FDI)
     u32 sector;
     FAT_WIN *win;
 
-    sector = get_sector_byclust(fs, dir->cur_clust) + dir->cur_nsector;
+    fat_printf("dir cluset %d\n", dir->cur_clust);
+    sector = get_sector_byclust(fs, dir->cur_clust);
     if (!sector) {
         return FS_CLUST_ERR;
     }
+    sector += dir->cur_nsector;
 
     win = fs->fs_win;
     CHECK_WIN(win, FS_BUSY);
@@ -686,7 +702,7 @@ static u32 fat_get_FDI(FAT_HDL *fs, FAT_DIR *dir, u8 *FDI)
 //寻找当前目录项的下个FDI
 static u32 fat_next_FDI(FAT_HDL *fs, FAT_DIR *dir, u8 *FDI)
 {
-    FAT_WIN *win;
+    /* FAT_WIN *win; */
     dir->FDI_index++;
     if (dir->FDI_index == FAT_SECTOR_SIZE / 32) {
         dir->cur_nsector++;
@@ -714,10 +730,11 @@ static u32 fat_write_FDI(FAT_HDL *fs, FAT_DIR *dir, u8 *FDI)
     
     fat_printf(" %s \n", __func__);
     win = fs->fs_win;
-    sector = get_sector_byclust(fs, dir->cur_clust) + dir->cur_nsector;
+    sector = get_sector_byclust(fs, dir->cur_clust);
     if (!sector) {
         return FS_CLUST_ERR;
     }
+    sector += dir->cur_nsector;
 
     CHECK_WIN(win, FS_BUSY);
     LOCK_WIN(win);
@@ -757,11 +774,12 @@ static void dir_info_to_FDI(FILE_DIR_INFO *file_info, u8 *FDI)
     FDI[26] = file_info->st_clust & 0xff;
     FDI[27] = file_info->st_clust >> 8 & 0xff;
     st_dword_func(&FDI[28], file_info->file_size);
+    fat_printf("up dir attr 0x%x st_clust 0x%x file size %d\n", file_info->attr, file_info->st_clust, file_info->file_size);
 }
 //寻找下一个文件目录项
 u32 fat_dir_next(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
 {
-    u32 sector;
+    /* u32 sector; */
     u8 FDI[32];
     u8 *name;
     u32 ret;
@@ -829,7 +847,6 @@ u32 creat_dir_entry(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
 {
     u32 ret;
     u8 FDI[32];
-    u8 str_len;
 
     //寻找当前目录下一个可用的空目录项
     fat_ld_dir(fs, dir, dir->st_clust);//重新加载目录起始位置
@@ -925,7 +942,7 @@ u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
                 while (1) {
                     switch (*path) {
                         case '\0':   //路径末尾
-                            if(p_dir == FAT_PATH_DEPTH - 1){
+                            if(p_dir->depth == FAT_PATH_DEPTH - 1){
                                 return FS_DIR_LIMI;
                             }
                             fat_ld_dir(fs, &p_dir->dir[++p_dir->depth], file_info.st_clust);
@@ -935,7 +952,7 @@ u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
 #endif
                             return FS_NO_ERR;
                         case '/':  //还有后续目录
-                            if(p_dir == FAT_PATH_DEPTH - 1){
+                            if(p_dir->depth == FAT_PATH_DEPTH - 1){
                                 return FS_DIR_LIMI;
                             }
                             fat_ld_dir(fs, &p_dir->dir[++p_dir->depth], file_info.st_clust);
@@ -1044,7 +1061,12 @@ static u32 fat_creat_file(FAT_HDL *fs, PATH_DIR *p_dir, FILE_DIR_INFO *file_info
         memset(file_info->name, 0x00, sizeof(file_info->name));
         memcpy(file_info->name, file_name, name_len + 4);
     }
-    fat_uppercase((char *)file_info->name); 
+    //不支持小写创建
+    if(check_lowercase((char *)file_info->name)){
+       return FS_PATH_ERR; 
+    }
+    /* fat_uppercase((char *)file_info->name);  */
+
     return creat_dir_entry(fs, dir, file_info);
 }
 
@@ -1052,8 +1074,6 @@ static u32 fat_creat_file(FAT_HDL *fs, PATH_DIR *p_dir, FILE_DIR_INFO *file_info
 u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
 {
     u32 ret;
-    char dir_name;
-    u16 name_len;
     FAT_DIR *dir;
     FILE_DIR_INFO file_info;
 
@@ -1190,6 +1210,8 @@ u32 fat_open_file(FAT_HDL *fs, FILE_HDL *f_hdl, char *path, u32 access)
     bool find_file_flag = false;
     u32 ret;
     char *cp = path;
+
+    memset(f_hdl, 0x00, sizeof(FILE_HDL));
     if (*path != '/') { //相对路径
         memcpy(&f_hdl->p_dir, &fs->fs_dir, sizeof(PATH_DIR));
     }
@@ -1218,7 +1240,6 @@ u32 fat_open_file(FAT_HDL *fs, FILE_HDL *f_hdl, char *path, u32 access)
             fat_printf("file_name %s:%s\n", file_info.name, filename);
             if (!fat_strcmp(filename, (char *)file_info.name, 0)) { //名字匹配
                 fat_printf("open %s sucess\n", filename);
-                memset(f_hdl, 0x00, sizeof(FILE_HDL));
                 memcpy(&f_hdl->file_info, &file_info, sizeof(FILE_DIR_INFO));
                 f_hdl->fs = fs;
                 f_hdl->cur_clust = file_info.st_clust;
@@ -1258,7 +1279,7 @@ u32 fat_open_file(FAT_HDL *fs, FILE_HDL *f_hdl, char *path, u32 access)
             fat_printf("creat file %s\n", path);
             ret = fat_creat_file(fs, &f_hdl->p_dir, &file_info, path);
             CHECK_RES(ret);
-            memset(f_hdl, 0x00, sizeof(FILE_HDL));
+            /* memset(f_hdl, 0x00, sizeof(FILE_HDL)); */
             memcpy(&f_hdl->file_info, &file_info, sizeof(FILE_DIR_INFO));
             f_hdl->fs = fs;
             f_hdl->cur_clust = file_info.st_clust;
@@ -1300,7 +1321,11 @@ u32 fat_syn_file(FILE_HDL *f_hdl)
     CHECK_RES(ret);
 #endif
    dir = &f_hdl->p_dir.dir[f_hdl->p_dir.depth];
+   f_hdl->file_info.file_size = f_hdl->ptr; 
    ret = fat_updata_dir(fs, dir, &f_hdl->file_info);
+   CHECK_RES(ret);
+
+   ret = fat_syn_win(fs, fs->fs_win);
    return ret;
 }
 void fat_close_file(FILE_HDL *f_hdl)
@@ -1459,9 +1484,11 @@ s32 fat_file_write(FILE_HDL *f_hdl, u8 *buffer, u32 len)
     u16 sec_size = fs->sector_512size << 9;
     u32 ret;
 
+#if !FAT_WRITE_EN
     if (f_hdl->access & (FAT_CREATE_NEW | FAT_CREATE_ALWAYS | FAT_WRITE)) { //只读文件系统不允许写
-        return FS_ACCESS_ERR;
+        return -FS_ACCESS_ERR;
     }
+#endif
 
 #if FAT_TINY
     win = fs->fs_win;
@@ -1476,7 +1503,7 @@ s32 fat_file_write(FILE_HDL *f_hdl, u8 *buffer, u32 len)
                 return -FS_IS_FULL; 
             }
             ret = fat_update_clust_node(fs, sclust, 0x0fffffff); //添加结束标志
-            CHECK_RES(ret);
+            CHECK_RES(-ret);
             f_hdl->file_info.st_clust = sclust;
             f_hdl->cur_clust = sclust;
         }
@@ -1489,7 +1516,7 @@ s32 fat_file_write(FILE_HDL *f_hdl, u8 *buffer, u32 len)
         }
         sec_offset = f_hdl->ptr & 0x1ff;
         write_len   = len - write_cnt ;//FAT_MIN(f_hdl->dir_info.file_size - f_hdl->ptr, len - read_cnt);
-        fat_printf("write len %d read cnt %d ptr %d file_size %d\n", write_len, write_cnt, f_hdl->ptr, f_hdl->file_info.file_size);
+        fat_printf("write len %d write cnt %d ptr %d file_size %d\n", write_len, write_cnt, f_hdl->ptr, f_hdl->file_info.file_size);
         if (write_len == 0) { //已经写完成
             return write_cnt;
         }
@@ -1505,7 +1532,10 @@ s32 fat_file_write(FILE_HDL *f_hdl, u8 *buffer, u32 len)
                 if (CHECK_CLUST_END(next_clust)) { //到达簇链尾
                     u32 nclust;
                     nclust = (write_len>>9)/fs->clust_nsector; 
-                    ret = fat_creat_clust_link(fs, next_clust, nclust);
+                    if(nclust == 0){
+                       nclust = 1; 
+                    }
+                    ret = fat_creat_clust_link(fs, f_hdl->cur_clust, nclust);
                     CHECK_RES(ret);
                     continue;
                 }

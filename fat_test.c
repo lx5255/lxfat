@@ -19,8 +19,11 @@ static u32 fs_dev_read_api(void *hdev, u8 *buf, u32 addr, u32 len)
 
 static u32 fs_dev_write_api(void *hdev, u8 *buf, u32 addr, u32 len)
 {
+    u32 ret;
     put_buf(buf, len*512);
-    if (512*len != dev_write(hdev, buf, addr, len)) {
+    ret = dev_write(hdev, buf, addr, len);
+    if (512*len !=  ret){
+        printf("dev w err %d\n", ret);
         return 1;
     }
     return 0;
@@ -100,8 +103,8 @@ const KEY_REG task_fat_key = {
 static _mbr_info mbr;
 static FAT_HDL fs_hd;
 static FILE_HDL file_hdl;
-static u8 fat_data_buffer1[124];
-static char filename[] = "/0000.fat";
+static u8 fat_data_buffer1[1024*8];
+static char filename[] = "/0000.FAT";
 static u16 namecnt = 0;
 static FAT_HDL *fs_p = NULL;
 static FILE_HDL *f_p = NULL;
@@ -140,7 +143,8 @@ void __fs_open_file()
         printf("no open fs\n");
        return; 
     }
-    res = fat_open_file(&fs_hd, &file_hdl, "/111/222/333/444/555/666/777/LXFAT.TXT", 0);
+    res = fat_open_file(&fs_hd, &file_hdl, get_filename(), 0);
+    /* res = fat_open_file(&fs_hd, &file_hdl, "/111/222/333/444/555/666/777/LXFAT.TXT", 0); */
      if (!res) {
      /* if (!fat_open_file(&fs_hd, &file_hdl, get_filename(), 0)) { */
         printf("file size %d\n", file_hdl.file_info.file_size);
@@ -149,6 +153,7 @@ void __fs_open_file()
         }
     }else{
         printf("open err %d\n", res);
+        f_p = NULL;
         return;
     }
     f_p = &file_hdl;
@@ -156,7 +161,7 @@ void __fs_open_file()
 
 void __fs_write_file()
 {
-    u32 ret;
+    s32 ret;
     if(fs_p == NULL){
         printf("no open fs\n");
         return; 
@@ -164,14 +169,25 @@ void __fs_write_file()
 
 open_file:
     ret = fat_open_file(&fs_hd, &file_hdl, get_filename(), FAT_CREATE_NEW);
+    printf("open file  %d\n", ret);
     if(ret){
-        printf("open file  %x\n", ret);
         if(ret == FS_FILE_EXIST){
             namecnt++; 
             goto open_file;
         }
+        f_p = NULL;
+        return;     
     }
-     f_p = &file_hdl;
+    f_p = &file_hdl;
+
+    u8 cnt = 0;
+    for(; cnt<100; cnt++){
+        memset(fat_data_buffer1, cnt, sizeof(fat_data_buffer1));
+        ret = fat_file_write(f_p, fat_data_buffer1, sizeof(fat_data_buffer1));
+        printf("write file  %d\n", ret);
+    }
+    ret = fat_syn_file(f_p);
+    printf("syn file  %d\n", ret);
 }
 
 void __fs_mk_dir()

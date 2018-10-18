@@ -161,6 +161,7 @@ u32 fat_rm(FAT_HDL *fs, FAT_DIR *dir);
 s32 fat_file_read(FILE_HDL *f_hdl, u8 *buffer, u32 len);
 s32 fat_file_write(FILE_HDL *f_hdl, u8 *buffer, u32 len);
 u32 fat_file_del(FILE_HDL *f_hdl);
+u32 fat_syn_file(FILE_HDL *f_hdl);
 u32 fat_file_seek(FILE_HDL *f_hdl, s32 seek, u8 mode);
 u32 fat_file_tell(FILE_HDL *f_hdl);
 u32 fat_format(FAT_DEV_INFO *dev_api, u32 st_sec, u32 nsec);
