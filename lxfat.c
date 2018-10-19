@@ -223,21 +223,21 @@ static u32 fat_disk_write(FAT_HDL *fs, u8 *buffer, u32 sector, u32 len)
 #if FAT_WRITE_EN
     FAT_DEV_INFO *dev_api = &fs->dev_api;
 
-    printf("1");
+    /* printf("1"); */
     if (dev_api == NULL) {
         return FS_DISK_ERR;
     }
 
-    printf("2");
+    /* printf("2"); */
     if (dev_api->dev_block_size > FAT_SECTOR_SIZE) {
         return FS_DISK_ERR;
     }
-    printf("3");
+    /* printf("3"); */
     if (sector < fs->fs_start_sec) { //不在文件系统管理内，不可写
         return FS_ACCESS_ERR;
     }
 
-    printf("4");
+    /* printf("4"); */
     if (dev_api->dev_block_size != FAT_SECTOR_SIZE) {
         len = FAT_SECTOR_SIZE / dev_api->dev_block_size * len;
     }
@@ -246,9 +246,11 @@ static u32 fat_disk_write(FAT_HDL *fs, u8 *buffer, u32 sector, u32 len)
         return FS_DISK_ERR;
     }
 
-    printf("5");
-#endif
+    /* printf("5"); */
     return FS_NO_ERR;
+#else
+    return FS_ACCESS_ERR;
+#endif
 }
 
 #define LOCK_WIN(w)     do{(w)->flag |= WIN_BUSY;}while(0)
@@ -304,7 +306,7 @@ static u32 fat_move_win(FAT_HDL *fs, FAT_WIN *win, u32 sector)
         ret = fat_syn_win(fs, win);
         CHECK_RES(ret);
 
-        fat_printf("mov win %x %x\n", win->sector, sector);
+        /* fat_printf("mov win %x %x\n", win->sector, sector); */
         if (FS_NO_ERR != fat_disk_read(fs, win->buffer, sector, 1)) {
             return FS_DISK_ERR;
         }
@@ -379,11 +381,36 @@ u32 check_fat(u8 *dbr)
     return FAT32;
 }
 
+static u32 update_fs_info(FAT_HDL *fs)
+{
+    u8 *fsinf;
+    u32 ret;
+
+    CHECK_WIN(fs->fs_win, FS_BUSY);
+    LOCK_WIN(fs->fs_win);
+    ret = fat_move_win(fs, fs->fs_win, fs->fs_info_sector);
+    if(!ret){
+        fsinf = fs->fs_win->buffer;
+        //校验文件信息区
+        if((ld_dword_func(&fsinf[0]) == 0x41615252)&&(ld_dword_func(&fsinf[484]) == 0x61417272)){
+            if((ld_dword_func(&fsinf[488])!= fs->remain_clust)||(ld_dword_func(&fsinf[492])!= fs->next_clust)){
+                st_dword_func(&fsinf[488], fs->remain_clust);        
+                st_dword_func(&fsinf[492], fs->next_clust);
+                fs->fs_win->flag |= DIRTY;        
+                fat_printf("update fs info\n");
+            }
+        }
+    }
+    UNLOCK_WIN(fs->fs_win);
+
+    return FS_NO_ERR;
+}
 u32 fat_open_fs(FAT_HDL *fs, FAT_DEV_INFO *dev_info, u32 boot_start)
 {
     u32 ret;
     u8 *dbr;
     u8 *bpb;
+    u8 *fsinf;
 
     if (fs == NULL) {
         return FS_HDL_ERR;
@@ -417,11 +444,24 @@ u32 fat_open_fs(FAT_HDL *fs, FAT_DEV_INFO *dev_info, u32 boot_start)
     fs->total_sector        = ld_dword_func(&bpb[21]);
     fs->fat_tab_nsector     = ld_dword_func(&bpb[25]);
     fs->root_dir_clust      = ld_dword_func(&bpb[33]);
-    fs->fs_info_sector      = ld_word_func(&bpb[37]);
+    fs->fs_info_sector      = ld_word_func(&bpb[37]) + fs->fs_start_sec;
     fs->data_start_sector   = fs->fat_tab_start + fs->fat_tab_nsector * fs->fat_tab_num;
     fs->next_clust          = 2;
-    fs->fs_dir.depth        = 1;
+    fs->fs_dir.depth        = 0;
 
+    ret = fat_move_win(fs, fs->fs_win, fs->fs_info_sector);
+    if (ret != FS_NO_ERR) {
+        goto __open_fs_err;
+    }
+
+    
+    fsinf = fs->fs_win->buffer;
+    put_buf(fsinf, 512);
+    //校验文件信息区
+    if((ld_dword_func(&fsinf[0]) == 0x41615252)&&(ld_dword_func(&fsinf[484]) == 0x61417272)){
+        fs->remain_clust = ld_dword_func(&fsinf[488]);        
+        fs->next_clust   = ld_dword_func(&fsinf[492]);
+    }
 
     fat_ld_dir(fs, &fs->fs_dir.dir[0], fs->root_dir_clust);
     fat_printf("extern flag 0x%x\n", ld_word_func(&bpb[29]));
@@ -433,6 +473,10 @@ u32 fat_open_fs(FAT_HDL *fs, FAT_DEV_INFO *dev_info, u32 boot_start)
     fat_printf("fs size %dM\n", fs->total_sector / 2048);
     fat_printf("fs->root_dir_clust %d\n", fs->root_dir_clust);
     fat_printf("fs->data_start_sector %d\n", fs->data_start_sector);
+    fat_printf("fs->remain_clust %d\n", fs->remain_clust);
+    fat_printf("fs->remain_size %d\n", fs->remain_clust * (fs->clust_nsector * fs->sector_512size>>1));
+    fat_printf("fs->next_clust %d\n", fs->next_clust);
+    fat_printf("fs->fs_info_sector %d\n", fs->fs_info_sector);
 
     return FS_NO_ERR;
 __open_fs_err:
@@ -441,8 +485,11 @@ __open_fs_err:
 }
 
 
-void close_fs(FAT_HDL *fs)
+void fat_close_fs(FAT_HDL *fs)
 { 
+#if UPDATE_FSINF
+    update_fs_info(fs);
+#endif
     fat_syn_fs(fs);
     free_win(fs->fs_win);
     fs->fs_win = NULL;
@@ -493,7 +540,7 @@ u32 fat_next_clust(FAT_HDL *fs, u32 cur_clust)
     return sclust;
 }
 //从FAT表获取一个空簇
-u32 fat_find_empty_clust(FAT_HDL *fs)
+static u32 fat_find_empty_clust(FAT_HDL *fs)
 {
     u32 fat_tab_sector;
     u32 offset_insector;
@@ -530,7 +577,50 @@ u32 fat_find_empty_clust(FAT_HDL *fs)
     } while (next_clust);
 
     fs->next_clust = cur_clust;
+    if(fs->remain_clust){
+        fs->remain_clust--;
+    }
     return cur_clust;
+}
+
+static s32 get_empty_nclust(FAT_HDL *fs)
+{
+    u32 fat_tab_sector;
+    u32 offset_insector;
+    u32 cur_clust, clust_cnt, next_clust;
+    FAT_WIN *win;
+    u32 ret;
+
+    win = fs->fs_win;
+    cur_clust = 2;
+    clust_cnt = 0;
+
+    //寻找一个空簇
+    do {
+        cur_clust++;
+        if (cur_clust > (fs->fat_tab_nsector << 7)) { //是否超出FAT表
+            break;
+        }
+        fat_tab_sector = fs->fat_tab_start + (cur_clust >> 7);
+        offset_insector = (cur_clust << 2) & 0x1ff;
+        CHECK_WIN(win, 0);
+        LOCK_WIN(win);
+        ret = fat_move_win(fs, win, fat_tab_sector);
+        if (FS_NO_ERR == ret) {
+            memcpy(&next_clust, &fs->fs_win->buffer[offset_insector], 4);
+        }
+        UNLOCK_WIN(win);
+
+        if (ret != FS_NO_ERR) {
+            return -ret;
+        }
+        if(next_clust == 0){
+           clust_cnt++; 
+        }
+    } while (1);
+    fs->remain_clust = clust_cnt; 
+
+    return clust_cnt;
 }
 
 //更新当前簇对应的FAT表信息
@@ -655,6 +745,7 @@ u32 fat_rm_clust_link(FAT_HDL *fs, u32 st_clust)
         if (ret) {
             break;
         }
+        cur_clust = next_clust;
     } while ((next_clust > 2) && (next_clust < 0x0fffffef));
     fat_printf("\n");
     return ret;
@@ -895,6 +986,7 @@ u32 fat_find_dir(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
 //创建一个目录项
 u32 creat_dir_entry(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
 {
+#if FAT_WRITE_EN
     u32 ret;
     u8 FDI[32];
 
@@ -937,11 +1029,15 @@ u32 creat_dir_entry(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
     stack_check();
 
     return ret;
+#else
+    return FS_ACCESS_ERR;
+#endif
 }
 
 //更新目录信息到磁盘
 u32 fat_updata_dir(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
 {
+#if FAT_WRITE_EN
     u8 FDI[32];
     u32 res;
 
@@ -954,6 +1050,9 @@ u32 fat_updata_dir(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
     st_word_func(&FDI[22], get_cur_time());
     //写入FDI
     return fat_write_FDI(fs, dir, FDI);
+#else
+    return FS_ACCESS_ERR;
+#endif
 }
 
 
@@ -1040,6 +1139,7 @@ u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
 
 static u32 fat_creat_file(FAT_HDL *fs, PATH_DIR *p_dir, FILE_DIR_INFO *file_info, char *path)
 {
+#if FAT_WRITE_EN
     u32 ret;
     char *file_name;
     u16 name_len;
@@ -1130,11 +1230,15 @@ static u32 fat_creat_file(FAT_HDL *fs, PATH_DIR *p_dir, FILE_DIR_INFO *file_info
     /* fat_uppercase((char *)file_info->name);  */
 
     return creat_dir_entry(fs, dir, file_info);
+#else
+    return FS_ACCESS_ERR;
+#endif
 }
 
 //创建一个目录
 u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
 {
+#if FAT_WRITE_EN
     u32 ret;
     FAT_DIR *dir;
     FILE_DIR_INFO file_info;
@@ -1274,6 +1378,9 @@ path_end:
         fat_rm_clust_link(fs, file_info.st_clust);
     }
     return ret;
+#else
+    return FS_ACCESS_ERR;
+#endif
 }
 
 //打开文件
@@ -1377,6 +1484,7 @@ u32 fat_open_file(FAT_HDL *fs, FILE_HDL *f_hdl, char *path, u32 access)
 
 u32 fat_syn_file(FILE_HDL *f_hdl)
 {
+#if FAT_WRITE_EN
     FAT_HDL *fs; 
     u32 ret;
     FAT_WIN *win;
@@ -1403,6 +1511,9 @@ u32 fat_syn_file(FILE_HDL *f_hdl)
    ret = fat_syn_win(fs, fs->fs_win);
    f_hdl->file_flag &= ~F_DIR_UPDATE;
    return ret;
+#else
+    return FS_NO_ERR;
+#endif
 }
 
 u32 fat_close_file(FILE_HDL *f_hdl)
@@ -1415,14 +1526,10 @@ u32 fat_close_file(FILE_HDL *f_hdl)
     f_hdl->data_win = NULL;
     return FS_NO_ERR;
 }
-/*  */
-/* u32 fat_file_close(FILE_HDL *f_hdl) */
-/* { */
-/*     fat_syn_file(f_hdl); */
-/* } */
 //删除文件
 u32 fat_rm_dirdot(FAT_HDL *fs, FAT_DIR *dir)
 {
+#if FAT_WRITE_EN
     u8 FDI[32];
     u32 ret, st_clust;
     u8 attr;
@@ -1446,11 +1553,15 @@ u32 fat_rm_dirdot(FAT_HDL *fs, FAT_DIR *dir)
     ret =  fat_write_FDI(fs, dir, FDI);
     CHECK_RES(ret);
     return fat_syn_win(fs, fs->fs_win);
+#else
+    return FS_ACCESS_ERR;
+#endif
 }
 
 
 u32 fat_file_del(FILE_HDL *f_hdl)
 {
+#if FAT_WRITE_EN
     u32 ret;
     ret =  fat_rm_dirdot(f_hdl->fs, &f_hdl->p_dir.dir[f_hdl->p_dir.depth]);
     CHECK_RES(ret);
@@ -1458,6 +1569,10 @@ u32 fat_file_del(FILE_HDL *f_hdl)
     f_hdl->data_win = NULL;
     memset(f_hdl,0x00, sizeof(FILE_HDL));
     return FS_NO_ERR;
+#else
+    return FS_ACCESS_ERR;
+#endif
+
 }
 
 s32 fat_file_read(FILE_HDL *f_hdl, u8 *buffer, u32 len)
@@ -1778,6 +1893,16 @@ u32 fat_file_seek(FILE_HDL *f_hdl, s32 seek, u8 mode)
 u32 fat_file_tell(FILE_HDL *f_hdl)
 {
     return f_hdl->ptr;
+}
+
+s32 fat_get_remain(FAT_HDL *fs)
+{
+    s32 ret; 
+    ret = get_empty_nclust(fs);
+    if(ret<=0){
+        return ret;
+    }
+    return  ret * (fs->clust_nsector*fs->sector_512size>>1);
 }
 
 //格式化fat32

@@ -1,10 +1,11 @@
 #ifndef _LXFAT_H
 #define _LXFAT_H
 
-#define FAT_WRITE_EN        1 
+#define FAT_WRITE_EN        0 
 #define FAT_TINY            0
 #define FAT_LFN_EN          0
 #define DIR_ACCELE          0   //目录加速,需要更多BUFF 
+#define UPDATE_FSINF        1   //是否更新文件系统信息区
 
 #define FAT_SECTOR_SIZE     512
 #define FAT_PATH_LEN        128
@@ -88,7 +89,8 @@ struct _FAT_HDL {
     u32 fat_tab_total;
     u32 root_dir_clust;
     u32 fs_info_sector;    //文件系统信息扇区
-    u32 file_totle;
+    u32 remain_clust;
+    // u32 file_totle;
     FAT_DEV_INFO dev_api;
     FAT_WIN *fs_win;
     PATH_DIR fs_dir;         //文件系统目录，作为当前目录使用
@@ -151,8 +153,8 @@ enum {
 };
 
 
-u32 fat_syn_fs(FAT_HDL *fs);
 u32 fat_open_fs(FAT_HDL *fs, FAT_DEV_INFO *dev_info, u32 boot_start);
+void fat_close_fs(FAT_HDL *fs);
 void fat_ld_dir(FAT_HDL *fs, FAT_DIR *dir, u32 clust);
 u32 fat_dir_next(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info);
 u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path);
@@ -167,6 +169,7 @@ u32 fat_close_file(FILE_HDL *f_hdl);
 u32 fat_syn_file(FILE_HDL *f_hdl);
 u32 fat_file_seek(FILE_HDL *f_hdl, s32 seek, u8 mode);
 u32 fat_file_tell(FILE_HDL *f_hdl);
+s32 fat_get_remain(FAT_HDL *fs);
 u32 fat_format(FAT_DEV_INFO *dev_api, u32 st_sec, u32 nsec);
 
 #endif

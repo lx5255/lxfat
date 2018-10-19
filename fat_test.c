@@ -55,7 +55,7 @@ void stack_check()
                         /*00*/    MSG_FS_WRITE_OP,\
                         /*01*/    MSG_FS_FILE_MK,\
                         /*02*/    MSG_FS_DEL,\
-                        /*03*/    NO_MSG,\
+                        /*03*/    MSG_CLOSE_FS,\
                         /*04*/    NO_MSG,\
                         /*05*/    NO_MSG,\
                         /*06*/    NO_MSG,\
@@ -141,6 +141,7 @@ FAT_HDL *__fs_open(void *dev, u32 boot)
     if (fat_open_fs(&fs_hd, &dev_info, boot)) {
         return NULL; 
     }
+    printf("fat remain %dK\n", fat_get_remain(&fs_hd));
 
     printf("open fs succ\n");
     return &fs_hd;
@@ -242,6 +243,16 @@ void __fs_del()
     }
 }
 
+void __fs_close()
+{
+    if(fs_p == NULL){
+        printf("no open fs\n");
+        return; 
+    }
+    fat_close_fs(fs_p);
+    fs_p = NULL;
+}
+
 #include "wdt.h"
 void fat_loop()
 {
@@ -331,6 +342,9 @@ void fat_loop()
                 break;
             case MSG_CHANGE_WORKMODE:
                 return;
+                break;
+            case MSG_CLOSE_FS:
+                __fs_close();
                 break;
             default:
                 break;
