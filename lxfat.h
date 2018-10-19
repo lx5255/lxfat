@@ -112,18 +112,20 @@ typedef struct _FILE_DIR_INFO {
 #define	FAT_WRITE			0x04            //是否允许写文件
 #define	FAT_CREATE_NEW		0x08            //文件不存在时创建
 #define	FAT_CREATE_ALWAYS	0x10            //无论文件中否存在，均创建
+
+//文件标志位
+#define F_DIR_UPDATE        0x01 
 // #endif
 typedef struct _FILE_HDL {
     u32 cur_clust;
     u32 ptr;
     u32 access;
+    u32 file_flag;
     FILE_DIR_INFO file_info;
    // FAT_DIR dir;
     PATH_DIR p_dir;
     FAT_HDL *fs;
-#if !FAT_TINY
     FAT_WIN *data_win;
-#endif
     u8 cur_nsector;
 } FILE_HDL;
 
@@ -155,12 +157,13 @@ void fat_ld_dir(FAT_HDL *fs, FAT_DIR *dir, u32 clust);
 u32 fat_dir_next(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info);
 u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path);
 //u32 fat_open_dir(FAT_HDL *fs, const char *path);
-u32 fat_mk_dir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path);
+u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path);
 u32 fat_open_file(FAT_HDL *fs, FILE_HDL *f_hdl, char *path, u32 access);
 u32 fat_rm(FAT_HDL *fs, FAT_DIR *dir);
 s32 fat_file_read(FILE_HDL *f_hdl, u8 *buffer, u32 len);
 s32 fat_file_write(FILE_HDL *f_hdl, u8 *buffer, u32 len);
 u32 fat_file_del(FILE_HDL *f_hdl);
+u32 fat_close_file(FILE_HDL *f_hdl);
 u32 fat_syn_file(FILE_HDL *f_hdl);
 u32 fat_file_seek(FILE_HDL *f_hdl, s32 seek, u8 mode);
 u32 fat_file_tell(FILE_HDL *f_hdl);

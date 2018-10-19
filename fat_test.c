@@ -20,7 +20,7 @@ static u32 fs_dev_read_api(void *hdev, u8 *buf, u32 addr, u32 len)
 static u32 fs_dev_write_api(void *hdev, u8 *buf, u32 addr, u32 len)
 {
     u32 ret;
-    put_buf(buf, len*512);
+    /* put_buf(buf, len*512); */
     ret = dev_write(hdev, buf, addr, len);
     if (512*len !=  ret){
         printf("dev w err %d\n", ret);
@@ -35,7 +35,7 @@ void stack_check()
 {
     u32 check_tmp;
     u32 used_size;
-    used_size = (u32)&check_tmp - (u32)STACK_END; 
+    used_size = (u32)STACK_END - (u32)&check_tmp;  
     printf("stack start %x   stack end %x used_size %d\n", STACK_START, STACK_END, used_size);
 }
 
@@ -54,7 +54,7 @@ void stack_check()
 #define ADKEY_FAT_LONG		\
                         /*00*/    MSG_FS_WRITE_OP,\
                         /*01*/    MSG_FS_FILE_MK,\
-                        /*02*/    NO_MSG,\
+                        /*02*/    MSG_FS_DEL,\
                         /*03*/    NO_MSG,\
                         /*04*/    NO_MSG,\
                         /*05*/    NO_MSG,\
@@ -103,18 +103,28 @@ const KEY_REG task_fat_key = {
 static _mbr_info mbr;
 static FAT_HDL fs_hd;
 static FILE_HDL file_hdl;
-static u8 fat_data_buffer1[1024*8];
+static u8 fat_data_buffer1[124];
 static char filename[] = "/0000.FAT";
+static char foldername[] = "/0000";
 static u16 namecnt = 0;
+static u16 dircnt = 0;
 static FAT_HDL *fs_p = NULL;
 static FILE_HDL *f_p = NULL;
-char *get_filename()
+char *get_filename(bool isfile)
 {
-    filename[1] = namecnt%10000/1000 + '0'; 
-    filename[2] = namecnt%1000/100 + '0'; 
-    filename[3] = namecnt%100/10 + '0'; 
-    filename[4] = namecnt%10 + '0'; 
-    return filename;
+    if(isfile){
+        filename[1] = namecnt%10000/1000 + '0'; 
+        filename[2] = namecnt%1000/100 + '0'; 
+        filename[3] = namecnt%100/10 + '0'; 
+        filename[4] = namecnt%10 + '0'; 
+        return filename;
+    }else{
+        foldername[1] = dircnt%10000/1000 + '0'; 
+        foldername[2] = dircnt%1000/100 + '0'; 
+        foldername[3] = dircnt%100/10 + '0'; 
+        foldername[4] = dircnt%10 + '0'; 
+        return foldername;
+    }
 }
 //static u8 fat_data_buffer[1024 * 10];
 FAT_HDL *__fs_open(void *dev, u32 boot)
@@ -143,10 +153,10 @@ void __fs_open_file()
         printf("no open fs\n");
        return; 
     }
-    res = fat_open_file(&fs_hd, &file_hdl, get_filename(), 0);
+    res = fat_open_file(&fs_hd, &file_hdl, get_filename(true), 0);
     /* res = fat_open_file(&fs_hd, &file_hdl, "/111/222/333/444/555/666/777/LXFAT.TXT", 0); */
      if (!res) {
-     /* if (!fat_open_file(&fs_hd, &file_hdl, get_filename(), 0)) { */
+     /* if (!fat_open_file(&fs_hd, &file_hdl, get_filename(true), 0)) { */
         printf("file size %d\n", file_hdl.file_info.file_size);
         while (124 == fat_file_read(&file_hdl, fat_data_buffer1, 124)) {
             printf("%s", fat_data_buffer1);
@@ -168,7 +178,7 @@ void __fs_write_file()
     }
 
 open_file:
-    ret = fat_open_file(&fs_hd, &file_hdl, get_filename(), FAT_CREATE_NEW);
+    ret = fat_open_file(&fs_hd, &file_hdl, get_filename(true), FAT_CREATE_NEW);
     printf("open file  %d\n", ret);
     if(ret){
         if(ret == FS_FILE_EXIST){
@@ -186,21 +196,31 @@ open_file:
         ret = fat_file_write(f_p, fat_data_buffer1, sizeof(fat_data_buffer1));
         printf("write file  %d\n", ret);
     }
-    ret = fat_syn_file(f_p);
+    /* ret = fat_syn_file(f_p); */
+    ret = fat_close_file(f_p);
     printf("syn file  %d\n", ret);
 }
 
 void __fs_mk_dir()
 {
+
     u32 ret;
     if(fs_p == NULL){
         printf("no open fs\n");
         return; 
     }
+    extern void stack_check();
+    stack_check();
 
-    ret = fat_mk_dir(&fs_hd, NULL, "/0001");
+
+__mk_dir:
+    ret = fat_mkdir(&fs_hd, NULL, get_filename(false));
+     printf("open dir %d\n", ret); 
     if(ret){
-       printf("open dir %d\n", ret); 
+        if(ret == FS_FILE_EXIST){
+           dircnt++;
+           goto __mk_dir; 
+        }
     }
 }
 
@@ -218,7 +238,7 @@ void __fs_del()
 
     ret = fat_file_del(&file_hdl);
     if(ret){
-       printf("open dir %d\n", ret); 
+       printf("file del %d\n", ret); 
     }
 }
 

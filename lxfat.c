@@ -141,6 +141,53 @@ static u16 check_lowercase(char *str)
     }
     return 0;
 }
+
+
+struct _FAT_TIME {
+    u16 sec :5;
+    u16 min :6;
+    u16 hour:5;
+};
+
+struct _FAT_DATE {
+    u16 day :5;
+    u16 mon :4;
+    u16 year:7;
+};
+
+static u16 get_cur_time()
+{
+    struct _FAT_TIME time;
+   u8 hour, min, sec; 
+   hour = 10;
+   min  = 30;
+   sec  = 30;
+   time.hour = hour;
+   time.min  = min;
+   time.sec  = sec/2;
+   /* fat_printf("fat time size %d\n", sizeof(struct _FAT_TIME)); */
+   return *(u16 *)&time;
+}
+
+static u16 get_cur_date()
+{
+   struct _FAT_DATE date;
+   u8 mon, day; 
+   u16 year;
+
+   year = 2018;
+   mon  = 10;
+   day  = 7;
+
+   date.year = year - 1980;
+   date.mon  = mon;
+   date.day  = day;
+   /* fat_printf("fat date size %d\n", sizeof(struct _FAT_DATE)); */
+   return *(u16 *)&date;
+
+    return 0;    
+}
+
 //********************************************************************************************
 //                      FAT DISK  FUNC
 //
@@ -600,13 +647,16 @@ u32 fat_rm_clust_link(FAT_HDL *fs, u32 st_clust)
     u32 ret = FS_NO_ERR;
 
     cur_clust = st_clust;
+    fat_printf("rm cluset:");
     do {
+        fat_printf("->%x", cur_clust);
         next_clust = fat_next_clust(fs, cur_clust);
         ret = fat_update_clust_node(fs, cur_clust, 0x0); //将当前簇设为空闲
         if (ret) {
             break;
         }
     } while ((next_clust > 2) && (next_clust < 0x0fffffef));
+    fat_printf("\n");
     return ret;
 }
 
@@ -676,7 +726,7 @@ static u32 fat_get_FDI(FAT_HDL *fs, FAT_DIR *dir, u8 *FDI)
     u32 sector;
     FAT_WIN *win;
 
-    fat_printf("dir cluset %d\n", dir->cur_clust);
+    /* fat_printf("dir cluset %d\n", dir->cur_clust); */
     sector = get_sector_byclust(fs, dir->cur_clust);
     if (!sector) {
         return FS_CLUST_ERR;
@@ -852,10 +902,10 @@ u32 creat_dir_entry(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
     fat_ld_dir(fs, dir, dir->st_clust);//重新加载目录起始位置
     do {
         ret = fat_next_FDI(fs, dir, FDI);
-        printf("ret %d\n", ret);
+        /* printf("ret %d\n", ret); */
         switch (ret) {
         case FS_NO_ERR:
-            put_buf(FDI,32);
+            /* put_buf(FDI,32); */
             switch (FDI[0]) {
             case 0://无效FDI可使用
             case 0xe5:
@@ -873,12 +923,19 @@ u32 creat_dir_entry(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
             return ret;
         }
 
-
         memset(FDI, 0x00, 32);
         dir_info_to_FDI(file_info, FDI);
+        st_word_func(&FDI[14], get_cur_time());
+        st_word_func(&FDI[16], get_cur_date());
+        st_word_func(&FDI[24], get_cur_date());
+        st_word_func(&FDI[22], get_cur_time());
+
         ret = fat_write_FDI(fs, dir, FDI);
         break; 
     } while (1);
+    extern void stack_check();
+    stack_check();
+
     return ret;
 }
 
@@ -893,6 +950,8 @@ u32 fat_updata_dir(FAT_HDL *fs, FAT_DIR *dir, FILE_DIR_INFO *file_info)
     CHECK_RES(res);
     //更新FDI
     dir_info_to_FDI(file_info, FDI);
+    st_word_func(&FDI[24], get_cur_date());
+    st_word_func(&FDI[22], get_cur_time());
     //写入FDI
     return fat_write_FDI(fs, dir, FDI);
 }
@@ -929,9 +988,11 @@ u32 fat_open_dir_bypath(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
             }
         }
         if (*p == '\0') {
-            if (is_file == true) { //路径最后是文件
+            /* if (is_file == true) { //路径最后是文件 */
                 return FS_NO_ERR;
-            }
+            /* }else{ */
+            /*     return FS_NO_FILE; */
+            /* } */
         }
     }
 
@@ -1007,6 +1068,7 @@ static u32 fat_creat_file(FAT_HDL *fs, PATH_DIR *p_dir, FILE_DIR_INFO *file_info
     }
     name_len = fat_strlen(file_name, '.');
     if (!name_len) {
+        fat_printf("%s %d\n", __func__, __LINE__);
         return FS_PATH_ERR;
     }
     fat_printf("crear file name %s\n", file_name);
@@ -1090,6 +1152,7 @@ u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
     fat_ld_dir(fs, dir, dir->st_clust);
     ret = fat_open_dir_bypath(fs, p_dir, path);
     CHECK_RES(ret);
+
     dir = &p_dir->dir[p_dir->depth];
 
     
@@ -1100,11 +1163,13 @@ u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
         if (ret) {
             break;
         }
+
+        fat_printf("next dir %s:%s\n",path, file_info.name);
         if (file_info.attr & AM_DIR) { //改文件时子目录
             if (!fat_strcmp(path, (char *)file_info.name, '/')) { //名字匹配
-                fat_printf("next dir %s\n", file_info.name);
+                fat_printf("cmp sucess\n");
                 return FS_FILE_EXIST;
-                }
+            }
         }
     }
     if (ret == FS_DIR_END) {
@@ -1112,7 +1177,7 @@ u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
         u8 namecnt;
         //u32 cur_sector;
         //拷贝文件名
-        for (namecnt = 0; (*path != '/') || (*path != '\0'); path++, namecnt++) {
+        for (namecnt = 0; (*path != '/') && (*path != '\0'); path++, namecnt++) {
             if (namecnt == FAT_PATH_LEN - 1) {
                 return FS_PATH_ERR;
             }
@@ -1156,6 +1221,11 @@ u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
         FDI[21] = file_info.st_clust >> 24 & 0xff;
         FDI[26] = file_info.st_clust & 0xff;
         FDI[27] = file_info.st_clust >> 8 & 0xff;
+        st_word_func(&FDI[14], get_cur_time());
+        st_word_func(&FDI[16], get_cur_date());
+        st_word_func(&FDI[24], get_cur_date());
+        st_word_func(&FDI[22], get_cur_time());
+
 
         FDI = &win->buffer[32];
         memset(&FDI[0], 0x20, 11);
@@ -1165,6 +1235,11 @@ u32 fat_mkdir(FAT_HDL *fs, PATH_DIR *p_dir, const char *path)
         FDI[21] = dir->st_clust >> 24 & 0xff;
         FDI[26] = dir->st_clust & 0xff;
         FDI[27] = dir->st_clust >> 8 & 0xff;
+        st_word_func(&FDI[14], get_cur_time());
+        st_word_func(&FDI[16], get_cur_date());
+        st_word_func(&FDI[24], get_cur_date());
+        st_word_func(&FDI[22], get_cur_time());
+
 
         //清除当前簇的数据
 /* u32 clear_clust_data(FAT_HDL *fs, u32 cur_clust) */
@@ -1326,13 +1401,19 @@ u32 fat_syn_file(FILE_HDL *f_hdl)
    CHECK_RES(ret);
 
    ret = fat_syn_win(fs, fs->fs_win);
+   f_hdl->file_flag &= ~F_DIR_UPDATE;
    return ret;
 }
-void fat_close_file(FILE_HDL *f_hdl)
+
+u32 fat_close_file(FILE_HDL *f_hdl)
 {
-    fat_syn_file(f_hdl);
+    u32 ret = FS_NO_ERR;
+    if(f_hdl->file_flag&F_DIR_UPDATE){ 
+        ret = fat_syn_file(f_hdl);
+    }
     free_win(f_hdl->data_win);
     f_hdl->data_win = NULL;
+    return FS_NO_ERR;
 }
 /*  */
 /* u32 fat_file_close(FILE_HDL *f_hdl) */
@@ -1340,7 +1421,7 @@ void fat_close_file(FILE_HDL *f_hdl)
 /*     fat_syn_file(f_hdl); */
 /* } */
 //删除文件
-u32 fat_rm_dirent(FAT_HDL *fs, FAT_DIR *dir)
+u32 fat_rm_dirdot(FAT_HDL *fs, FAT_DIR *dir)
 {
     u8 FDI[32];
     u32 ret, st_clust;
@@ -1362,13 +1443,21 @@ u32 fat_rm_dirent(FAT_HDL *fs, FAT_DIR *dir)
     CHECK_RES(ret); 
 
     FDI[0] = 0xE5;  //目录项无效标志
-    return fat_write_FDI(fs, dir, FDI);
+    ret =  fat_write_FDI(fs, dir, FDI);
+    CHECK_RES(ret);
+    return fat_syn_win(fs, fs->fs_win);
 }
 
 
 u32 fat_file_del(FILE_HDL *f_hdl)
 {
-    return fat_rm_dirent(f_hdl->fs, &f_hdl->p_dir.dir[f_hdl->p_dir.depth]);
+    u32 ret;
+    ret =  fat_rm_dirdot(f_hdl->fs, &f_hdl->p_dir.dir[f_hdl->p_dir.depth]);
+    CHECK_RES(ret);
+    free_win(f_hdl->data_win);
+    f_hdl->data_win = NULL;
+    memset(f_hdl,0x00, sizeof(FILE_HDL));
+    return FS_NO_ERR;
 }
 
 s32 fat_file_read(FILE_HDL *f_hdl, u8 *buffer, u32 len)
@@ -1508,6 +1597,7 @@ s32 fat_file_write(FILE_HDL *f_hdl, u8 *buffer, u32 len)
             f_hdl->cur_clust = sclust;
         }
     }
+    f_hdl->file_flag |= F_DIR_UPDATE;
 
     for (write_cnt = 0; write_cnt < len;) {
         cur_sector =  get_sector_byclust(fs, f_hdl->cur_clust) + f_hdl->cur_nsector;
